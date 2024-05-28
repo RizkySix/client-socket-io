@@ -1,113 +1,201 @@
-import Image from "next/image";
+"use client";
+import axios from "axios";
+import { useCallback, useState, useRef, useEffect } from "react";
+import { io } from "socket.io-client";
 
 export default function Home() {
+  const [nickname, setNickname] = useState('');
+  const [text, setMessage] = useState('');
+  const [messages, setMessages] = useState<{ id: string, nickname: string, text: string, time: string, readAt: string, tokenUser: string }[]>([]);
+  const [isAuth, setIsAuth] = useState(false);
+  const [socket, setSocket] = useState<any>(null);
+  const [channelId, setChannelId] = useState('');
+  
+  // Refs to keep track of current state values
+  const nicknameRef = useRef(nickname);
+  const textRef = useRef(text);
+  const channelIdRef = useRef(channelId);
+
+  // Update refs whenever state changes
+  const updateRefs = () => {
+    nicknameRef.current = nickname;
+    textRef.current = text;
+    channelIdRef.current = channelId;
+  };
+
+  useEffect(() => {
+    axios.get('https://cce3-103-190-47-18.ngrok-free.app/api/v1/chat-room/90e69ba9-3ef9-45c3-8a0c-96a0ff7f7f29', {
+      headers: {
+        'ngrok-skip-browser-warning': 'skip-browser-warning'
+      }
+    })
+      .then(response => {
+        console.log(response);
+        const newMessages = response.data.messages.map((msg: any) => ({
+          id: msg.id,
+          nickname: msg.user.role.name,
+          text: msg.text,
+          time: msg.created_at,
+          readAt: msg.read_at,
+          tokenUser: localStorage.getItem('token')
+        }));
+  
+        setMessages(newMessages); // Set initial messages
+      })
+      .catch(error => {
+        console.error('Error fetching data:', error);
+      });
+  }, []); // Empty dependency array ensures this runs once on mount
+  
+
+  const authenticate = useCallback(() => {
+    setIsAuth(true);
+    console.log(messages)
+    const token = localStorage.getItem('token');
+    const socketInstance = io("https://cce3-103-190-47-18.ngrok-free.app", {
+      auth: {
+        token: `Bearer ${token}`
+      },
+      extraHeaders: {
+        'ngrok-skip-browser-warning': 'skip-browser-warning'
+      }
+    });
+    setSocket(socketInstance);
+
+    socketInstance.on('error', (error) => {
+      if (error.message === 'You are not joined to this channel') {
+        console.error('Error:', error.message);
+
+        // Use ref values instead of state values
+        const currentNickname = nicknameRef.current;
+        const currentText = textRef.current;
+        const currentChannelId = localStorage.getItem('channel');
+
+        socketInstance.emit('subscribeToChannel', { channelId: currentChannelId });
+
+        socketInstance.emit('sendMessage', { channelId: currentChannelId, content: { nickname: currentNickname, text: currentText } });
+        setMessage(''); // Clear message input after sending
+      } else {
+        window.alert('Invalid message');
+      }
+    });
+
+    socketInstance.on('text-chat', (msg: { id: string, nickname: string, text: string, time: string, readAt: string, tokenUser: string }) => {
+      console.log(msg);
+      setMessages(oldMessages => {
+        const newMessages = [...oldMessages, msg];
+    
+        // Bisa dibuatkan method terpisah nanti
+        const parsed = Array.isArray(newMessages) ? newMessages : [newMessages];
+        console.log(newMessages);
+        const unreadMessages = parsed.filter(message => !message.readAt).map(message => message.id);
+        
+        console.log(msg.tokenUser)
+        console.log(localStorage.getItem('token'))
+
+        if (unreadMessages.length > 0 /* && msg.tokenUser != localStorage.getItem('token') */) {
+          console.log(unreadMessages);
+          socketInstance.emit('markAsRead', { messageId: unreadMessages, channelId: channelIdRef.current });
+        }
+        
+        return newMessages;
+      });
+    });
+    
+
+    socketInstance.on('messageRead', (datas: { messageId: { id: string, read_at: string }[] }) => {
+      setMessages(oldMessages => {
+        const updatedMessages = oldMessages.map(message => {
+          const readData = datas.messageId.find(data => data.id === message.id);
+          if (readData) {
+            message.readAt = readData.read_at;
+          }
+          return message;
+        });
+        return updatedMessages;
+      });
+    });
+
+    socketInstance.on('exception', (error: string) => {
+      window.alert('Invalid message: ' + error);
+    });
+  }, []);
+
+  const subscribeToChannel = () => {
+    updateRefs(); // Update refs before using them
+    if (channelId && socket) {
+      localStorage.setItem("channel", channelId);
+      socket.emit('subscribeToChannel', { channelId });
+    }
+  };
+
+  const unsubscribeFromChannel = () => {
+    updateRefs(); // Update refs before using them
+    if (channelId && socket) {
+      socket.emit('unsubscribeFromChannel', { channelId });
+    }
+  };
+
+  const sendMessage = () => {
+    updateRefs(); // Update refs before using them
+    if (nickname && text && socket && channelId) {
+      socket.emit('sendMessage', { channelId, content: { nickname, text } });
+      setMessage(''); // Clear message input after sending
+    }
+  };
+
   return (
-    <main className="flex min-h-screen flex-col items-center justify-between p-24">
-      <div className="z-10 w-full max-w-5xl items-center justify-between font-mono text-sm lg:flex">
-        <p className="fixed left-0 top-0 flex w-full justify-center border-b border-gray-300 bg-gradient-to-b from-zinc-200 pb-6 pt-8 backdrop-blur-2xl dark:border-neutral-800 dark:bg-zinc-800/30 dark:from-inherit lg:static lg:w-auto  lg:rounded-xl lg:border lg:bg-gray-200 lg:p-4 lg:dark:bg-zinc-800/30">
-          Get started by editing&nbsp;
-          <code className="font-mono font-bold">src/app/page.tsx</code>
-        </p>
-        <div className="fixed bottom-0 left-0 flex h-48 w-full items-end justify-center bg-gradient-to-t from-white via-white dark:from-black dark:via-black lg:static lg:size-auto lg:bg-none">
-          <a
-            className="pointer-events-none flex place-items-center gap-2 p-8 lg:pointer-events-auto lg:p-0"
-            href="https://vercel.com?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            By{" "}
-            <Image
-              src="/vercel.svg"
-              alt="Vercel Logo"
-              className="dark:invert"
-              width={100}
-              height={24}
-              priority
-            />
-          </a>
-        </div>
+    <div>
+      <h1>Chat App</h1>
+      <div>
+        {messages.map((msg, index) => (
+          <div key={index}>
+            <p>ID: {msg.id}</p>
+            <p>Nickname: {msg.nickname}</p>
+            <p>Message: {msg.text}</p>
+            <p>Time: {msg.time}</p>
+            <p>Read At: {msg.readAt}</p>
+            <br />
+            <br />
+          </div>
+        ))}
       </div>
-
-      <div className="relative z-[-1] flex place-items-center before:absolute before:h-[300px] before:w-full before:-translate-x-1/2 before:rounded-full before:bg-gradient-radial before:from-white before:to-transparent before:blur-2xl before:content-[''] after:absolute after:-z-20 after:h-[180px] after:w-full after:translate-x-1/3 after:bg-gradient-conic after:from-sky-200 after:via-blue-200 after:blur-2xl after:content-[''] before:dark:bg-gradient-to-br before:dark:from-transparent before:dark:to-blue-700 before:dark:opacity-10 after:dark:from-sky-900 after:dark:via-[#0141ff] after:dark:opacity-40 sm:before:w-[480px] sm:after:w-[240px] before:lg:h-[360px]">
-        <Image
-          className="relative dark:drop-shadow-[0_0_0.3rem_#ffffff70] dark:invert"
-          src="/next.svg"
-          alt="Next.js Logo"
-          width={180}
-          height={37}
-          priority
-        />
-      </div>
-
-      <div className="mb-32 grid text-center lg:mb-0 lg:w-full lg:max-w-5xl lg:grid-cols-4 lg:text-left">
-        <a
-          href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className="mb-3 text-2xl font-semibold">
-            Docs{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className="m-0 max-w-[30ch] text-sm opacity-50">
-            Find in-depth information about Next.js features and API.
-          </p>
-        </a>
-
-        <a
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className="mb-3 text-2xl font-semibold">
-            Learn{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className="m-0 max-w-[30ch] text-sm opacity-50">
-            Learn about Next.js in an interactive course with&nbsp;quizzes!
-          </p>
-        </a>
-
-        <a
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className="mb-3 text-2xl font-semibold">
-            Templates{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className="m-0 max-w-[30ch] text-sm opacity-50">
-            Explore starter templates for Next.js.
-          </p>
-        </a>
-
-        <a
-          href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className="mb-3 text-2xl font-semibold">
-            Deploy{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className="m-0 max-w-[30ch] text-balance text-sm opacity-50">
-            Instantly deploy your Next.js site to a shareable URL with Vercel.
-          </p>
-        </a>
-      </div>
-    </main>
+      {isAuth ? (
+        <>
+          <input 
+            type="text" 
+            placeholder="Your nickname" 
+            value={nickname} 
+            onChange={(e) => {
+              setNickname(e.target.value);
+              nicknameRef.current = e.target.value; // Update ref when value changes
+            }} 
+          />
+          <input 
+            type="text" 
+            placeholder="Channel ID" 
+            value={channelId} 
+            onChange={(e) => {
+              setChannelId(e.target.value);
+              channelIdRef.current = e.target.value; // Update ref when value changes
+            }} 
+          />
+          <button onClick={subscribeToChannel}>Join Channel</button>
+          <button onClick={unsubscribeFromChannel}>Unsubscribe from Channel</button>
+          <input 
+            type="text" 
+            placeholder="Your message" 
+            value={text} 
+            onChange={(e) => {
+              setMessage(e.target.value);
+              textRef.current = e.target.value; // Update ref when value changes
+            }} 
+          />
+          <button onClick={sendMessage}>Send</button>
+        </>
+      ) : (
+        <button onClick={authenticate}>Authenticate</button>
+      )}
+    </div>
   );
 }
